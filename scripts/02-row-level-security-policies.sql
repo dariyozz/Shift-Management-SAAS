@@ -1,18 +1,55 @@
+-- TODO:
+-- ALTER TABLE public.business_members DISABLE ROW LEVEL SECURITY; 
+-- now the rls is disabled but we need to re-enable it when we are done
+-- ALTER TABLE public.business_members ENABLE ROW LEVEL SECURITY;
+
+
 -- =============================================
--- ROW LEVEL SECURITY POLICIES
+-- FIXED ROW LEVEL SECURITY POLICIES
 -- =============================================
 
--- Enable RLS on all tables
-ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.business_members ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.invitations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.employee_availability ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.shifts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.shift_requests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+-- First, drop all existing policies to start fresh
+DROP POLICY IF EXISTS "Users can view own profile" ON public.user_profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.user_profiles;
+DROP POLICY IF EXISTS "Business members can view business" ON public.businesses;
+DROP POLICY IF EXISTS "Owners can update business" ON public.businesses;
+DROP POLICY IF EXISTS "Authenticated users can create business" ON public.businesses;
+DROP POLICY IF EXISTS "Business owners/managers can view subscription" ON public.subscriptions;
+DROP POLICY IF EXISTS "Owners can update subscription" ON public.subscriptions;
+DROP POLICY IF EXISTS "Business members can view team" ON public.business_members;
+DROP POLICY IF EXISTS "Owners/managers can manage team" ON public.business_members;
+DROP POLICY IF EXISTS "Users can update own member info" ON public.business_members;
+DROP POLICY IF EXISTS "Owners/managers can manage invitations" ON public.invitations;
+DROP POLICY IF EXISTS "Anyone can view invitation by token" ON public.invitations;
+DROP POLICY IF EXISTS "Business members can view availability" ON public.employee_availability;
+DROP POLICY IF EXISTS "Users can manage own availability" ON public.employee_availability;
+DROP POLICY IF EXISTS "Managers can manage team availability" ON public.employee_availability;
+DROP POLICY IF EXISTS "Business members can view shifts" ON public.shifts;
+DROP POLICY IF EXISTS "Owners/managers can manage shifts" ON public.shifts;
+DROP POLICY IF EXISTS "Employees can update own shift status" ON public.shifts;
+DROP POLICY IF EXISTS "Business members can view shift requests" ON public.shift_requests;
+DROP POLICY IF EXISTS "Users can create own shift requests" ON public.shift_requests;
+DROP POLICY IF EXISTS "Managers can manage shift requests" ON public.shift_requests;
+DROP POLICY IF EXISTS "Users can view own notifications" ON public.notifications;
+DROP POLICY IF EXISTS "Users can update own notifications" ON public.notifications;
+DROP POLICY IF EXISTS "System can insert notifications" ON public.notifications;
+DROP POLICY IF EXISTS "Owners can view audit logs" ON public.audit_logs;
+DROP POLICY IF EXISTS "System can insert audit logs" ON public.audit_logs;
+DROP POLICY IF EXISTS "Members can view their business" ON public.businesses;
+DROP POLICY IF EXISTS "Members can view team in same business" ON public.business_members;
+DROP POLICY IF EXISTS "Owners and managers can update team" ON public.business_members;
+DROP policy IF exists "Authenticated users can create business members" on public.business_members;
+DROP policy IF exists "Users can update own member record" on public.business_members;
+DROP policy IF exists "Owners and managers can view subscription" on public.subscriptions;
+DROP policy IF exists "System can insert subscriptions" on public.subscriptions;
+DROP policy IF exists "Owners and managers can manage invitations" on public.invitations;
+DROP policy IF exists "Members can view availability in business" on public.employee_availability;
+DROP policy IF exists "Members can view shifts in business" on public.shifts;
+DROP policy IF exists "Owners and managers can manage shifts" on public.shifts;
+DROP policy IF exists "Members can view shift requests in business" on public.shift_requests;
+DROP policy IF exists "Users can create shift requests" on public.shift_requests;
+
+
 
 -- =============================================
 -- USER PROFILES POLICIES
@@ -26,109 +63,97 @@ CREATE POLICY "Users can update own profile" ON public.user_profiles
     FOR UPDATE USING (auth.uid() = id);
 
 -- =============================================
--- BUSINESSES POLICIES
+-- BUSINESSES POLICIES (SIMPLIFIED)
 -- =============================================
-
--- Business members can view their business
-CREATE POLICY "Business members can view business" ON public.businesses
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE business_id = businesses.id
-            AND user_id = auth.uid()
-            AND is_active = true
-        )
-    );
-
--- Only owners can update business details
-CREATE POLICY "Owners can update business" ON public.businesses
-    FOR UPDATE USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE business_id = businesses.id
-            AND user_id = auth.uid()
-            AND role = 'owner'
-            AND is_active = true
-        )
-    );
 
 -- Authenticated users can create businesses
 CREATE POLICY "Authenticated users can create business" ON public.businesses
     FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+-- Users can view businesses they are members of
+CREATE POLICY "Members can view their business" ON public.businesses
+    FOR SELECT USING (
+        id IN (
+            SELECT business_id FROM public.business_members
+            WHERE user_id = auth.uid() AND is_active = true
+        )
+    );
+
+-- Business owners can update their business
+CREATE POLICY "Owners can update business" ON public.businesses
+    FOR UPDATE USING (
+        id IN (
+            SELECT business_id FROM public.business_members
+            WHERE user_id = auth.uid() AND role = 'owner' AND is_active = true
+        )
+    );
+
+-- =============================================
+-- BUSINESS MEMBERS POLICIES (SIMPLIFIED)
+-- =============================================
+
+-- Authenticated users can insert business members (for initial business creation)
+CREATE POLICY "Authenticated users can create business members" ON public.business_members
+    FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+-- Users can view business members in their business
+CREATE POLICY "Members can view team in same business" ON public.business_members
+    FOR SELECT USING (
+        business_id IN (
+            SELECT business_id FROM public.business_members
+            WHERE user_id = auth.uid() AND is_active = true
+        )
+    );
+
+-- Owners and managers can update business members
+CREATE POLICY "Owners and managers can update team" ON public.business_members
+    FOR UPDATE USING (
+        business_id IN (
+            SELECT business_id FROM public.business_members
+            WHERE user_id = auth.uid() AND role IN ('owner', 'manager') AND is_active = true
+        )
+    );
+
+-- Users can update their own member record (limited)
+CREATE POLICY "Users can update own member record" ON public.business_members
+    FOR UPDATE USING (user_id = auth.uid());
 
 -- =============================================
 -- SUBSCRIPTIONS POLICIES
 -- =============================================
 
 -- Business owners and managers can view subscription
-CREATE POLICY "Business owners/managers can view subscription" ON public.subscriptions
+CREATE POLICY "Owners and managers can view subscription" ON public.subscriptions
     FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE business_id = subscriptions.business_id
-            AND user_id = auth.uid()
-            AND role IN ('owner', 'manager')
-            AND is_active = true
+        business_id IN (
+            SELECT business_id FROM public.business_members
+            WHERE user_id = auth.uid() AND role IN ('owner', 'manager') AND is_active = true
         )
     );
 
 -- Only owners can update subscription
 CREATE POLICY "Owners can update subscription" ON public.subscriptions
     FOR UPDATE USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE business_id = subscriptions.business_id
-            AND user_id = auth.uid()
-            AND role = 'owner'
-            AND is_active = true
+        business_id IN (
+            SELECT business_id FROM public.business_members
+            WHERE user_id = auth.uid() AND role = 'owner' AND is_active = true
         )
     );
 
--- =============================================
--- BUSINESS MEMBERS POLICIES
--- =============================================
-
--- Business members can view other members in their business
-CREATE POLICY "Business members can view team" ON public.business_members
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members bm
-            WHERE bm.business_id = business_members.business_id
-            AND bm.user_id = auth.uid()
-            AND bm.is_active = true
-        )
-    );
-
--- Owners and managers can manage team members
-CREATE POLICY "Owners/managers can manage team" ON public.business_members
-    FOR ALL USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE business_id = business_members.business_id
-            AND user_id = auth.uid()
-            AND role IN ('owner', 'manager')
-            AND is_active = true
-        )
-    );
-
--- Users can update their own member record (limited fields)
-CREATE POLICY "Users can update own member info" ON public.business_members
-    FOR UPDATE USING (user_id = auth.uid())
-    WITH CHECK (user_id = auth.uid());
+-- System can insert subscriptions (for triggers)
+CREATE POLICY "System can insert subscriptions" ON public.subscriptions
+    FOR INSERT WITH CHECK (true);
 
 -- =============================================
 -- INVITATIONS POLICIES
 -- =============================================
 
--- Owners and managers can view and manage invitations
-CREATE POLICY "Owners/managers can manage invitations" ON public.invitations
+-- Owners and managers can manage invitations
+CREATE POLICY "Owners and managers can manage invitations" ON public.invitations
     FOR ALL USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE business_id = invitations.business_id
-            AND user_id = auth.uid()
-            AND role IN ('owner', 'manager')
-            AND is_active = true
+        business_id IN (
+            SELECT business_id FROM public.business_members
+            WHERE user_id = auth.uid() AND role IN ('owner', 'manager') AND is_active = true
         )
     );
 
@@ -141,37 +166,33 @@ CREATE POLICY "Anyone can view invitation by token" ON public.invitations
 -- =============================================
 
 -- Business members can view availability in their business
-CREATE POLICY "Business members can view availability" ON public.employee_availability
+CREATE POLICY "Members can view availability in business" ON public.employee_availability
     FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members bm1
-            JOIN public.business_members bm2 ON bm1.business_id = bm2.business_id
-            WHERE bm2.id = employee_availability.business_member_id
-            AND bm1.user_id = auth.uid()
-            AND bm1.is_active = true
+        business_member_id IN (
+            SELECT id FROM public.business_members
+            WHERE business_id IN (
+                SELECT business_id FROM public.business_members
+                WHERE user_id = auth.uid() AND is_active = true
+            )
         )
     );
 
 -- Users can manage their own availability
 CREATE POLICY "Users can manage own availability" ON public.employee_availability
     FOR ALL USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE id = employee_availability.business_member_id
-            AND user_id = auth.uid()
+        business_member_id IN (
+            SELECT id FROM public.business_members
+            WHERE user_id = auth.uid()
         )
     );
 
 -- Managers can manage team availability
 CREATE POLICY "Managers can manage team availability" ON public.employee_availability
     FOR ALL USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members bm1
+        business_member_id IN (
+            SELECT bm1.id FROM public.business_members bm1
             JOIN public.business_members bm2 ON bm1.business_id = bm2.business_id
-            WHERE bm2.id = employee_availability.business_member_id
-            AND bm1.user_id = auth.uid()
-            AND bm1.role IN ('owner', 'manager')
-            AND bm1.is_active = true
+            WHERE bm2.user_id = auth.uid() AND bm2.role IN ('owner', 'manager') AND bm2.is_active = true
         )
     );
 
@@ -180,42 +201,29 @@ CREATE POLICY "Managers can manage team availability" ON public.employee_availab
 -- =============================================
 
 -- Business members can view shifts in their business
-CREATE POLICY "Business members can view shifts" ON public.shifts
+CREATE POLICY "Members can view shifts in business" ON public.shifts
     FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE business_id = shifts.business_id
-            AND user_id = auth.uid()
-            AND is_active = true
+        business_id IN (
+            SELECT business_id FROM public.business_members
+            WHERE user_id = auth.uid() AND is_active = true
         )
     );
 
 -- Owners and managers can manage all shifts
-CREATE POLICY "Owners/managers can manage shifts" ON public.shifts
+CREATE POLICY "Owners and managers can manage shifts" ON public.shifts
     FOR ALL USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE business_id = shifts.business_id
-            AND user_id = auth.uid()
-            AND role IN ('owner', 'manager')
-            AND is_active = true
+        business_id IN (
+            SELECT business_id FROM public.business_members
+            WHERE user_id = auth.uid() AND role IN ('owner', 'manager') AND is_active = true
         )
     );
 
 -- Employees can update their own shift status
 CREATE POLICY "Employees can update own shift status" ON public.shifts
     FOR UPDATE USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE id = shifts.assigned_to
-            AND user_id = auth.uid()
-        )
-    )
-    WITH CHECK (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE id = shifts.assigned_to
-            AND user_id = auth.uid()
+        assigned_to IN (
+            SELECT id FROM public.business_members
+            WHERE user_id = auth.uid()
         )
     );
 
@@ -224,37 +232,35 @@ CREATE POLICY "Employees can update own shift status" ON public.shifts
 -- =============================================
 
 -- Business members can view shift requests in their business
-CREATE POLICY "Business members can view shift requests" ON public.shift_requests
+CREATE POLICY "Members can view shift requests in business" ON public.shift_requests
     FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.shifts s
-            JOIN public.business_members bm ON s.business_id = bm.business_id
-            WHERE s.id = shift_requests.shift_id
-            AND bm.user_id = auth.uid()
-            AND bm.is_active = true
+        shift_id IN (
+            SELECT id FROM public.shifts
+            WHERE business_id IN (
+                SELECT business_id FROM public.business_members
+                WHERE user_id = auth.uid() AND is_active = true
+            )
         )
     );
 
--- Users can create requests for their own shifts
-CREATE POLICY "Users can create own shift requests" ON public.shift_requests
+-- Users can create requests for shifts in their business
+CREATE POLICY "Users can create shift requests" ON public.shift_requests
     FOR INSERT WITH CHECK (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE id = shift_requests.requested_by
-            AND user_id = auth.uid()
+        requested_by IN (
+            SELECT id FROM public.business_members
+            WHERE user_id = auth.uid()
         )
     );
 
 -- Managers can approve/deny requests
 CREATE POLICY "Managers can manage shift requests" ON public.shift_requests
     FOR UPDATE USING (
-        EXISTS (
-            SELECT 1 FROM public.shifts s
-            JOIN public.business_members bm ON s.business_id = bm.business_id
-            WHERE s.id = shift_requests.shift_id
-            AND bm.user_id = auth.uid()
-            AND bm.role IN ('owner', 'manager')
-            AND bm.is_active = true
+        shift_id IN (
+            SELECT id FROM public.shifts
+            WHERE business_id IN (
+                SELECT business_id FROM public.business_members
+                WHERE user_id = auth.uid() AND role IN ('owner', 'manager') AND is_active = true
+            )
         )
     );
 
@@ -281,12 +287,9 @@ CREATE POLICY "System can insert notifications" ON public.notifications
 -- Business owners can view audit logs
 CREATE POLICY "Owners can view audit logs" ON public.audit_logs
     FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.business_members
-            WHERE business_id = audit_logs.business_id
-            AND user_id = auth.uid()
-            AND role = 'owner'
-            AND is_active = true
+        business_id IN (
+            SELECT business_id FROM public.business_members
+            WHERE user_id = auth.uid() AND role = 'owner' AND is_active = true
         )
     );
 
@@ -294,5 +297,14 @@ CREATE POLICY "Owners can view audit logs" ON public.audit_logs
 CREATE POLICY "System can insert audit logs" ON public.audit_logs
     FOR INSERT WITH CHECK (true);
 
+
+CREATE POLICY "Users can view their own business_members row" ON public.business_members
+  FOR SELECT USING (
+    user_id = auth.uid()
+  );
+
 -- Success message
-SELECT 'Row Level Security policies created successfully!' as message;
+SELECT 'Fixed Row Level Security policies created successfully!' as message;
+
+
+

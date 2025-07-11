@@ -15,17 +15,27 @@ export default async function DashboardPage() {
 
   const supabase = await createClient()
 
-  // Get business member
   const { data: member, error: memberError } = await supabase
     .from("business_members")
-    .select(`
-      *,
-      business:businesses(*),
-      user_profile:user_profiles(*)
-    `)
+    .select("*")
     .eq("user_id", user.id)
     .eq("is_active", true)
-    .maybeSingle()
+    .maybeSingle();
+
+  let business = null;
+  let businessError = null;
+  if (member && member.business_id) {
+    const { data: businessData, error: businessFetchError } = await supabase
+      .from("businesses")
+      .select("*")
+      .eq("id", member.business_id)
+      .maybeSingle();
+    business = businessData;
+    businessError = businessFetchError;
+  }
+
+  console.log("member", member)
+  console.log("memberError", memberError)
 
   if (memberError) {
     console.error("Error fetching business member:", memberError)
@@ -39,6 +49,11 @@ export default async function DashboardPage() {
 
   // Get subscription status
   const subscription = await checkSubscriptionStatus(member.business_id)
+
+  // Block access if trial expired and not upgraded
+  if (!subscription?.canAccess) {
+    redirect("/upgrade")
+  }
 
   // Get recent shifts
   const { data: recentShifts } = await supabase
